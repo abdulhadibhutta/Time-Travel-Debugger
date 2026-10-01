@@ -14,15 +14,49 @@
 
 &#x09;-> Cloned repository to my Laptop
 
-&#x09;-> Read Project completely and understood it
-
-&#x09;-> Identified Project Stages
+&#x09;-> Read quickly to get the general idea without paying attention to details
 
 &#x09;-> Designed and added GitHub repositories folders
 
-&#x09;	. src: 	       contains .cpp implementation files
-
-&#x09;	. include:     contains .h files
+&#x09;	. server.cpp:  contains all data structures implementation
 
 &#x09;	. progress.md: contains information about each day of work done of project Phase 01
+
+
+
+
+
+##### \# Day 2 - Architecture Analysis:
+
+
+
+###### &#x09;Date: 01 October 2026
+
+
+
+&#x09;-> Studied the project PDF with paying attention
+
+&#x09;-> Studied the server.cpp template provided by the instructor
+
+&#x09;-> Identified Project Stages
+
+&#x09;	- Pass 0x0 Validation
+
+&#x09;	- Pass 0x1 Resolve
+
+&#x09;	- Pass 0x2 Execution
+
+&#x09;	- Pass 0x3 Serialization
+
+&#x09;
+
+&#x09;-> Identified required custom data structures:
+
+&#x09;	- Stack
+
+&#x09;	- Timeline
+
+&#x09;	- Snapshot
+
+&#x09;	- Frame
 
