@@ -49,29 +49,57 @@ public:
         top = nullptr;
         count = 0;
     }
+
     void push(const T &val)
     {
+        if (count >= MAX_STACK_DEPTH)
+            return;
 
-        // pushes the value on the stack if max limit is not reached yet.
+        Node* newNode = new Node;
+        newNode->data = val;
+        newNode->next = top;
+        top = newNode;
+        count++;
     }
+
     T pop()
     {
-        // pop the top value on the stack
+        if (isEmpty())
+            return T();
+
+        Node* temp = top;
+        T value = temp->data;
+        top = top->next;
+        delete temp;
+        count--;
+        return value;
     }
+
     T &peek()
     {
-        // returns the top value on the stack
+        return top->data;
     }
     bool isEmpty()
     {
+        return top == nullptr;
     }
     int32_t depth()
     {
+        return count;
     }
     int32_t snapshot_into(T out[], int32_t maxLen)
     {
-        // copies every frame, top to bottom in the array given as a parameter
-        // this is what buildSnapshot() call, returns count written
+        Node* curr = top;
+        int32_t index = 0;
+
+        while (curr != nullptrand index < maxLen)
+        {
+            out[index] = curr->data;
+            curr = curr->next;
+            index++;
+        }
+
+        return index;
     }
 };
 
