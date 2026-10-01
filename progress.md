@@ -60,3 +60,25 @@
 
 &#x09;	- Frame
 
+
+
+&#x09;-> Implemented Stack data structure:
+
+&#x09;	- Stack()
+
+&#x09;	- push()
+
+&#x09;	- pop()
+
+&#x09;	- peek()
+
+&#x09;	- isEmpty()
+
+&#x09;	- depth()
+
+&#x09;	- snapshot\_intro()
+
+
+
+&#x09;-> Understood how stack will be used as the Call stack during execution phase
+

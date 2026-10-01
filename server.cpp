@@ -45,7 +45,9 @@ class Stack
 public:
     // Implement these functions:
     Stack()
-    { // initialize the stack
+    {
+        top = nullptr;
+        count = 0;
     }
     void push(const T &val)
     {
