@@ -9,6 +9,7 @@
 
 
 #include <iostream>
+#include <vector>
 #include <string>
 #include <cstdint>
 #include <fstream>
@@ -121,16 +122,41 @@ public:
     // Implement these functions
     Timeline()
     {
+        head = nullptr;
+        tail = nullptr;
+        stepCount = 0;
     }
+
     void record(Snapshot *s)
     {
-        // add record in the timeline
+        TimelineNode* newNode = new TimelineNode;
+
+        newNode->data = s;
+        newNode->next = nullptr;
+        newNode->prev = tail;
+
+        if (head == nullptr)
+        {
+            head = newNode;
+            tail = newNode;
+        }
+
+        else
+        {
+            tail->next = newNode;
+            tail = newNode;
+        }
+
+        stepCount++;
     }
+
     TimelineNode *begin()
     {
+        return head;
     }
     int32_t getStepCount()
     {
+        return stepCount;
     }
 };
 
@@ -186,19 +212,108 @@ struct PendingPatch
 // PASS 0x0: READING source.bin + VALIDITY CHECK
 bool readSourceLine(ifstream &in, string &out)
 {
-    // reads the next nonblank line
+    while (getline(in, out))
+    {
+        if (out.length() > 0)
+            return true;
+    }
+
+    return false;
 }
+
 string firstWord(const string &line)
 {
-    // returns first word from the input string
+    string word = "";
+    int i = 0;
+
+    while (i < line.length() and line[i] != ' ')
+    {
+        word = word + line[i];
+        i++;
+    }
+
+    return word;
 }
+
 string secondWord(const string &line)
 {
-    // returns the second word
+    string word = "";
+    int i = 0;
+
+    while (i < line.length() and line[i] != ' ')
+        i++;
+
+    while (i < line.length() and line[i] == ' ')
+        i++;
+
+    while (i < line.length() and line[i] != ' ')
+    {
+        word = word + line[i];
+        i++;
+    }
+
+    return word;
 }
 bool validateProgram(const char *sourcePath)
 {
-    // for each func defined there should be exactly one func_end and no nested funcs allowed - 
+    ifstream in(sourcePath);
+
+    if (!in.is_open())
+        return false;
+
+    Stack<string> funcStack;
+    vector<string> functionNames;
+    string line;
+
+    while (readSourceLine(in, line))
+    {
+        string keyword = firstWord(line);
+
+        if (keyword == "func")
+        {
+            if (!funcStack.isEmpty())
+                return false;
+
+            string funcName = secondWord(line);
+
+            if (funcName == "")
+                return false;
+
+            for (int i = 0; i < functionNames.size(); i++)
+                if (functionNames[i] == funcName)
+                    return false;
+
+            functionNames.push_back(funcName);
+            funcStack.push(funcName);
+        }
+
+        else if (keyword == "func_end")
+        {
+            if (funcStack.isEmpty())
+                return false;
+
+            funcStack.pop();
+        }
+    }
+
+    if (!funcStack.isEmpty())
+        return false;
+
+    bool mainFound = false;
+
+    for (int i = 0; i < functionNames.size(); i++)
+    {
+        if (functionNames[i] == "main")
+        {
+            mainFound = true;
+            break;
+        }
+    }
+
+    if (!mainFound)
+        return false;
+
+    return true;
 }
 
 // PASS 0x1: RESOLVE() -> resolve.bin

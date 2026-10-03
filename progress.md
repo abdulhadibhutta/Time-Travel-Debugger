@@ -82,3 +82,53 @@
 
 &#x09;-> Understood how stack will be used as the Call stack during execution phase
 
+
+
+
+
+##### \# Day 3 - Timeline, Utility Functions and Validation
+
+
+
+###### &#x09;Date: 02 October 2026
+
+
+
+&#x09;-> Implemented Timeline data structure:
+
+&#x09;	- Timeline()
+
+&#x09;	- record()
+
+&#x09;	- begin()
+
+&#x09;	- getStepCount()
+
+
+
+&#x09;-> Implemented Utility Functions:
+
+&#x09;	- readSourceLine()
+
+&#x09;	- firstWord()
+
+&#x09;	- secondWord()
+
+
+
+&#x09;-> Implemented Validation Pass (Pass 0x0):
+
+&#x09;	- Matching func and func\_end validation
+
+&#x09;	- Nested Function detection
+
+&#x09;	- Duplicate function name detection
+
+&#x09;	- Main function existence validation
+
+
+
+&#x09;-> Used Vectors and its library to store function names
+
+&#x09;-> Completed Pass 0x0 completely
+
