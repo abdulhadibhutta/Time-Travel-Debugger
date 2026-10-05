@@ -67,3 +67,9 @@ vcpkg_installed/
 # test output & cache
 Testing/
 .cache/
+
+# Project generated binary files
+*.bin
+
+# Time Travel Debugger output
+*.tdbg

@@ -319,27 +319,108 @@ bool validateProgram(const char *sourcePath)
 // PASS 0x1: RESOLVE() -> resolve.bin
 int64_t writeResolveRecord(FILE *f, int64_t offsetField, const string &text)
 {
-    // writes one [offset(8B)][size(4B)][string] record at the current file position
-    // returns this record's own starting byte position
+    int64_t startPos = ftell(f);
+    int32_t size = text.length();
+
+    fwrite(&offsetField, sizeof(int64_t), 1, f);
+    fwrite(&size, sizeof(int32_t), 1, f);
+    fwrite(text.c_str(), sizeof(char), size, f);
+
+    return startPos;
 }
+
 int64_t readResolveRecord(FILE *f, string &outText)
 {
-    // reads one record at the current position and advances past it, returns the offset field - the raw line text comes back untouched in outText.
+    int64_t offsetField;
+    int32_t size;
+
+    fread(&offsetField, sizeof(int64_t), 1, f);
+    fread(&size, sizeof(int32_t), 1, f);
+    char* buffer = new char[size + 1];
+    fread(buffer, sizeof(char), size, f);
+
+    buffer[size] = '\0';
+    outText = buffer;
+    delete[] buffer;
+
+    return offsetField;
 }
+
 int64_t resolveProgram(const char *sourcePath, const char *resolveBinPath)
 {
     FuncEntry funcArray[MAX_FUNCS];
     int32_t funcCount = 0;
     PendingPatch patches[MAX_PATCHES];
     int32_t patchCount = 0;
-    // Every source line becomes one record holding the raw line, as-is.
-    // resolve() only PEEKS at the leading word(s) -- enough to spot FUNC
-    // (remember its position) and CALL (remember which function it needs
-    // and where its offset field sits).
-    // Once the whole file is written, every CALL's offset field is patched
-    // with its target's position. Patching happens after the full write
-    // Returns the byte offset of main's FUNC header record.
-    // if there is no main return the error 
+
+    ifstream in(sourcePath);
+
+    if (!in.is_open())
+        return -1;
+
+    FILE* out = fopen(resolveBinPath, "wb+");
+
+    if (out == nullptr)
+        return -1;
+
+    string line;
+    int64_t mainOffset = -1;
+
+    while (readSourceLine(in, line))
+    {
+        string keyword = firstWord(line);
+
+        if (keyword == "func")
+        {
+            string funcName = secondWord(line);
+            int64_t recordPos = writeResolveRecord(out, -1, line);
+
+            funcArray[funcCount].funcName = funcName;
+            funcArray[funcCount].byteOffsetInResolveBin = recordPos;
+            funcCount++;
+
+            if (funcName == "main")
+                mainOffset = recordPos;
+        }
+
+        else if (keyword == "call")
+        {
+            string targetFunc = secondWord(line);
+            int64_t recordPos = writeResolveRecord(out, -1, line);
+
+            patches[patchCount].byteOffsetOfOffsetField = recordPos;
+            patches[patchCount].targetFuncName = targetFunc;
+            patchCount++;
+        }
+
+        else
+            writeResolveRecord(out, -1, line);
+    }
+
+    for (int i = 0; i < patchCount; i++)
+    {
+        int64_t targetOffset = -1;
+
+        for (int j = 0; j < funcCount; j++)
+        {
+            if (funcArray[j].funcName == patches[i].targetFuncName)
+            {
+                targetOffset = funcArray[j].byteOffsetInResolveBin;
+                break;
+            }
+        }
+
+        if (targetOffset == -1)
+            continue;
+
+        fseek(out, patches[i].byteOffsetOfOffsetField, SEEK_SET);
+        fwrite(&targetOffset, sizeof(int64_t), 1, out);
+    }
+
+    fclose(out);
+    in.close();
+
+    return mainOffset;
 }
 
 // PASS 0x2: EXECUTION (tokenization happens here)
@@ -349,22 +430,101 @@ enum TokenType
     IDENTIFIER,
     PARAM
 };
+
 struct Token
 {
     TokenType type;
     string text;
 };
+
 int32_t tokenizeLine(const string &line, Token tokens[], int32_t maxTokens)
 {
-    // first word is always a instruction keyword
-    // instruction set = [func, func_end, call, set, add, sub, mul and div]
-    // next word is identifier like name of a function, variable name
-    // after identifier all are the params/arg, space separated
+    vector<string> words;
+    string current = "";
+
+    for (int i = 0; i < line.length(); i++)
+    {
+        if (line[i] == ' ')
+        {
+            if (!current.empty())
+            {
+                words.push_back(current);
+                current = "";
+            }
+        }
+
+        else
+            current = current + line[i];
+    }
+
+    if (!current.empty())
+        words.push_back(current);
+
+    int count = 0;
+
+    for (int i = 0; i < words.size() and count < maxTokens; i++)
+    {
+        tokens[count].text = words[i];
+
+        if (i == 0)
+            tokens[count].type = KEYWORD;
+
+        else if (i == 1)
+            tokens[count].type = IDENTIFIER;
+
+        else
+            tokens[count].type = PARAM;
+
+        count++;
+    }
+
+    return count;
 }
+
 Snapshot *buildSnapshot(Stack<Frame> &callStack)
 {
-    // build the snapshot based on the callStack given
+    Snapshot* snapshot = new Snapshot;
+    snapshot->stackDepth = callStack.snapshot_into(snapshot->callStack, MAX_STACK_DEPTH);
+    return snapshot;
 }
+
+int findVariable(Frame& frame, const string& name)
+{
+    for (int i = 0; i < frame.localCount; i++)
+        if (frame.locals[i].name == name)
+            return i;
+
+    return -1;
+}
+
+int getVariable(Frame& frame, const string& name)
+{
+    int index = findVariable(frame, name);
+
+    if (index == -1)
+        return 0;
+
+    return frame.locals[index].value;
+}
+
+void setVariable(Frame& frame, const string& name, int value)
+{
+    int index = findVariable(frame, name);
+
+    if (index != -1)
+    {
+        frame.locals[index].value = value;
+        return;
+    }
+
+    if (frame.localCount < MAX_VARS_PER_FRAME)
+    {
+        frame.locals[frame.localCount].name = name;
+        frame.locals[frame.localCount].value = value;
+        frame.localCount++;
+    }
+}
+
 void executeProgram(const char *resolveBinPath, int64_t mainOffset, Timeline &timeline)
 {
     // initialize the call stack

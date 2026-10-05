@@ -132,3 +132,45 @@
 
 &#x09;-> Completed Pass 0x0 completely
 
+
+
+##### \# Day 4 - Resolve Phase and Execution Preparation
+
+
+
+###### &#x09;Date: 05 October 2026
+
+
+
+&#x09;-> Implemented Resolve Pass (Pass 0x1):
+
+&#x09;	- writeResolveRecord()
+
+&#x09;	- readResolveRecord()
+
+&#x09;	- resolveProgram()
+
+
+
+&#x09;-> Implemented Tokenization system:
+
+&#x09;	- tokenizeLine()
+
+
+
+&#x09;-> Implementyed snapshot generation:
+
+&#x09;	- buildSnapshot()
+
+
+
+&#x09;-> Created my own source.bin file for testing
+
+&#x09;-> Implemented variable helper functions:
+
+&#x09;	- findVariable()
+
+&#x09;	- getVariable()
+
+&#x09;	- setVariable()
+
