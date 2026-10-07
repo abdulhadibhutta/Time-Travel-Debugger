@@ -93,7 +93,7 @@ public:
         Node* curr = top;
         int32_t index = 0;
 
-        while (curr != nullptrand index < maxLen)
+        while (curr != nullptr and index < maxLen)
         {
             out[index] = curr->data;
             curr = curr->next;
@@ -166,20 +166,24 @@ struct Variable
     string name;
     int32_t value;
 };
+
 struct Frame
 {
     string func_name;
     int32_t argc;
     Variable argv[MAX_VARS_PER_FRAME];
+    string argSourceNames[MAX_VARS_PER_FRAME];
     int32_t returnLine;
     Variable locals[MAX_VARS_PER_FRAME];
     int32_t localCount;
 };
+
 struct Snapshot
 {
     Frame callStack[MAX_STACK_DEPTH];
     int32_t stackDepth;
 };
+
 struct TTDBHeader
 {
     char magic[4]; // "TTDB"
@@ -187,12 +191,13 @@ struct TTDBHeader
     int32_t stepCount;
     int64_t indexOffset;
 };
-void writeHeader(FILE *f, const TTDBHeader &h)
+
+void writeHeader(FILE* f, const TTDBHeader& h)
 {
     fwrite(h.magic, 1, 4, f);
     fwrite(&h.version, sizeof(int32_t), 1, f);
-
-    // placeholder for other two data members
+    fwrite(&h.stepCount, sizeof(int32_t), 1, f);
+    fwrite(&h.indexOffset, sizeof(int64_t), 1, f);
 }
 
 // resolve.bin - bookkeeping
@@ -214,6 +219,9 @@ bool readSourceLine(ifstream &in, string &out)
 {
     while (getline(in, out))
     {
+        if (!out.empty() and out.back() == '\r')
+            out.pop_back();
+
         if (out.length() > 0)
             return true;
     }
@@ -254,7 +262,8 @@ string secondWord(const string &line)
 
     return word;
 }
-bool validateProgram(const char *sourcePath)
+
+bool validateProgram(const char* sourcePath)
 {
     ifstream in(sourcePath);
 
@@ -263,6 +272,8 @@ bool validateProgram(const char *sourcePath)
 
     Stack<string> funcStack;
     vector<string> functionNames;
+    vector<string> calledFunctions;
+
     string line;
 
     while (readSourceLine(in, line))
@@ -294,6 +305,16 @@ bool validateProgram(const char *sourcePath)
 
             funcStack.pop();
         }
+
+        else if (keyword == "call")
+        {
+            string functionName = secondWord(line);
+
+            if (functionName == "")
+                return false;
+
+            calledFunctions.push_back(functionName);
+        }
     }
 
     if (!funcStack.isEmpty())
@@ -312,6 +333,23 @@ bool validateProgram(const char *sourcePath)
 
     if (!mainFound)
         return false;
+
+    for (int i = 0; i < calledFunctions.size(); i++)
+    {
+        bool functionFound = false;
+
+        for (int j = 0; j < functionNames.size(); j++)
+        {
+            if (calledFunctions[i] == functionNames[j])
+            {
+                functionFound = true;
+                break;
+            }
+        }
+
+        if (!functionFound)
+            return false;
+    }
 
     return true;
 }
@@ -411,7 +449,7 @@ int64_t resolveProgram(const char *sourcePath, const char *resolveBinPath)
         }
 
         if (targetOffset == -1)
-            continue;
+            return -1;
 
         fseek(out, patches[i].byteOffsetOfOffsetField, SEEK_SET);
         fwrite(&targetOffset, sizeof(int64_t), 1, out);
@@ -525,32 +563,352 @@ void setVariable(Frame& frame, const string& name, int value)
     }
 }
 
-void executeProgram(const char *resolveBinPath, int64_t mainOffset, Timeline &timeline)
+bool isNumber(const string& text)
 {
-    // initialize the call stack
-    // make the main frame
-    // push main frame on the call stack
+    if (text.empty())
+        return false;
 
-    // implementation:
-    // execute line by line, and according to the keyword perform action
+    int start = 0;
+
+    if (text[0] == '-')
+    {
+        if (text.length() == 1)
+            return false;
+
+        start = 1;
+    }
+
+    for (int i = start; i < text.length(); i++)
+        if (text[i] < '0' or text[i] > '9')
+            return false;
+
+    return true;
+}
+
+int getValue(Frame& frame, const string& name)
+{
+    int localIndex = findVariable(frame, name);
+
+    if (localIndex != -1)
+        return frame.locals[localIndex].value;
+
+    for (int i = 0; i < frame.argc; i++)
+        if (frame.argv[i].name == name)
+            return frame.argv[i].value;
+
+    if (isNumber(name))
+        return stoi(name);
+
+    return 0;
+}
+
+void setValue(Frame& frame, const string& name, int value)
+{
+    for (int i = 0; i < frame.argc; i++)
+    {
+        if (frame.argv[i].name == name)
+        {
+            frame.argv[i].value = value;
+            return;
+        }
+    }
+
+    setVariable(frame, name, value);
+}
+
+void copyArgumentsBack(Frame& callee, Frame& caller)
+{
+    for (int i = 0; i < callee.argc; i++)
+    {
+        if (callee.argSourceNames[i] != "")
+        {
+            setValue(caller,
+                callee.argSourceNames[i],
+                callee.argv[i].value);
+        }
+    }
+}
+
+void executeProgram(const char* resolveBinPath, int64_t mainOffset, Timeline& timeline)
+{
+    FILE* file = fopen(resolveBinPath, "rb");
+
+    if (file == nullptr)
+        return;
+
+    Stack<Frame> callStack;
+    fseek(file, mainOffset, SEEK_SET);
+
+    string mainLine;
+    int64_t mainRecordOffset = readResolveRecord(file, mainLine);
+
+    Token mainTokens[MAX_TOKENS];
+    int32_t mainTokenCount = tokenizeLine(mainLine, mainTokens, MAX_TOKENS);
+
+    Frame mainFrame;
+    mainFrame.func_name = "main";
+    mainFrame.argc = 0;
+    mainFrame.returnLine = -1;
+    mainFrame.localCount = 0;
+
+    for (int i = 2; i < mainTokenCount && mainFrame.argc < MAX_VARS_PER_FRAME; i++)
+    {
+        mainFrame.argv[mainFrame.argc].name = mainTokens[i].text;
+        mainFrame.argv[mainFrame.argc].value = 0;
+        mainFrame.argSourceNames[mainFrame.argc] = "";
+        mainFrame.argc++;
+    }
+
+    callStack.push(mainFrame);
+    int64_t currentOffset = mainOffset;
+
+    while (!callStack.isEmpty())
+    {
+        fseek(file, currentOffset, SEEK_SET);
+
+        string line;
+        int64_t storedOffset = readResolveRecord(file, line);
+
+        if (feof(file))
+            break;
+
+        int64_t nextOffset = ftell(file);
+
+        Token tokens[MAX_TOKENS];
+        int32_t tokenCount = tokenizeLine(line, tokens, MAX_TOKENS);
+
+        if (tokenCount == 0)
+        {
+            currentOffset = nextOffset;
+            continue;
+        }
+
+        string keyword = tokens[0].text;
+
+        if (keyword == "func")
+            currentOffset = nextOffset;
+
+        else if (keyword == "set")
+        {
+            if (tokenCount >= 3)
+            {
+                Frame& currentFrame = callStack.peek();
+                int value = getValue(currentFrame, tokens[2].text);
+                setValue(currentFrame, tokens[1].text, value);
+            }
+
+            currentOffset = nextOffset;
+        }
+
+        else if (keyword == "add")
+        {
+            if (tokenCount >= 3)
+            {
+                Frame& currentFrame = callStack.peek();
+                int left = getValue(currentFrame, tokens[1].text);
+                int right = getValue(currentFrame, tokens[2].text);
+                setValue(currentFrame, tokens[1].text, left + right);
+            }
+
+            currentOffset = nextOffset;
+        }
+
+        else if (keyword == "sub")
+        {
+            if (tokenCount >= 3)
+            {
+                Frame& currentFrame = callStack.peek();
+                int left = getValue(currentFrame, tokens[1].text);
+                int right = getValue(currentFrame, tokens[2].text);
+                setValue(currentFrame, tokens[1].text, left - right);
+            }
+
+            currentOffset = nextOffset;
+        }
+
+        else if (keyword == "mul")
+        {
+            if (tokenCount >= 3)
+            {
+                Frame& currentFrame = callStack.peek();
+                int left = getValue(currentFrame, tokens[1].text);
+                int right = getValue(currentFrame, tokens[2].text);
+                setValue(currentFrame, tokens[1].text, left * right);
+            }
+
+            currentOffset = nextOffset;
+        }
+
+        else if (keyword == "div")
+        {
+            if (tokenCount >= 3)
+            {
+                Frame& currentFrame = callStack.peek();
+                int left = getValue(currentFrame, tokens[1].text);
+                int right = getValue(currentFrame, tokens[2].text);
+
+                if (right != 0)
+                    setValue(currentFrame, tokens[1].text, left / right);
+            }
+
+            currentOffset = nextOffset;
+        }
+
+        else if (keyword == "call")
+        {
+            int64_t targetOffset = storedOffset;
+            fseek(file, targetOffset, SEEK_SET);
+
+            string targetLine;
+            readResolveRecord(file, targetLine);
+
+            Token targetTokens[MAX_TOKENS];
+            int32_t targetTokenCount = tokenizeLine(targetLine, targetTokens, MAX_TOKENS);
+
+            Frame caller = callStack.peek();
+
+            Frame newFrame;
+            newFrame.func_name = targetTokenCount >= 2 ? targetTokens[1].text : "";
+
+            newFrame.argc = 0;
+            newFrame.returnLine = (int32_t)nextOffset;
+            newFrame.localCount = 0;
+
+            int argumentIndex = 2;
+
+            while (argumentIndex < tokenCount && newFrame.argc < MAX_VARS_PER_FRAME)
+            {
+                if (newFrame.argc + 2 >= targetTokenCount)
+                    break;
+
+                string formalName = targetTokens[newFrame.argc + 2].text;
+                string actualName = tokens[argumentIndex].text;
+                newFrame.argv[newFrame.argc].name = formalName;
+                newFrame.argv[newFrame.argc].value = getValue(caller, actualName);
+                newFrame.argSourceNames[newFrame.argc] = actualName;
+                newFrame.argc++;
+                argumentIndex++;
+            }
+
+            callStack.push(newFrame);
+            currentOffset = targetOffset;
+        }
+
+        else if (keyword == "func_end")
+        {
+            Frame finishedFrame = callStack.pop();
+
+            if (callStack.isEmpty())
+            {
+                Snapshot* snapshot = buildSnapshot(callStack);
+                timeline.record(snapshot);
+                break;
+            }
+
+            Frame& caller = callStack.peek();
+            copyArgumentsBack(finishedFrame, caller);
+            currentOffset = (int64_t)finishedFrame.returnLine;
+        }
+
+        Snapshot* snapshot = buildSnapshot(callStack);
+        timeline.record(snapshot);
+    }
+
+    fclose(file);
+}
+
+void writeString(FILE* f, const string& text)
+{
+    int32_t size = text.length();
+
+    fwrite(&size, sizeof(int32_t), 1, f);
+    fwrite(text.c_str(), sizeof(char), size, f);
+}
+
+void writeVariable(FILE* f, const Variable& variable)
+{
+    writeString(f, variable.name);
+    fwrite(&variable.value, sizeof(int32_t), 1, f);
+}
+
+void writeFrame(FILE* f, const Frame& frame)
+{
+    writeString(f, frame.func_name);
+
+    fwrite(&frame.argc, sizeof(int32_t), 1, f);
+
+    for (int i = 0; i < frame.argc; i++)
+    {
+        writeVariable(f, frame.argv[i]);
+    }
+
+    fwrite(&frame.returnLine, sizeof(int32_t), 1, f);
+
+    fwrite(&frame.localCount, sizeof(int32_t), 1, f);
+
+    for (int i = 0; i < frame.localCount; i++)
+    {
+        writeVariable(f, frame.locals[i]);
+    }
+}
+
+void writeSnapshot(FILE* f, const Snapshot& snapshot)
+{
+    fwrite(&snapshot.stackDepth, sizeof(int32_t), 1, f);
+
+    for (int i = 0; i < snapshot.stackDepth; i++)
+    {
+        writeFrame(f, snapshot.callStack[i]);
+    }
 }
 
 // PASS 0x3: SERIALIZE TIMELINE
-void writeTdbg(Timeline &timeline, const char *tdbgPath)
+void writeTdbg(Timeline& timeline, const char* tdbgPath)
 {
-    // placeholder for header
-    // index array of the size of stepcount from the timeline
-    // placing each snapshot in the file while maintaining the index(starting point of each nth snapshot)
-    // after timeline add the index array i the file
-    // update the header
+    FILE* file = fopen(tdbgPath, "wb+");
+
+    if (file == nullptr)
+        return;
+
+    TTDBHeader header;
+
+    header.magic[0] = 'T';
+    header.magic[1] = 'T';
+    header.magic[2] = 'D';
+    header.magic[3] = 'B';
+
+    header.version = 1;
+    header.stepCount = timeline.getStepCount();
+    header.indexOffset = 0;
+
+    writeHeader(file, header);
+    vector<int64_t> index;
+    TimelineNode* current = timeline.begin();
+
+    while (current != nullptr)
+    {
+        int64_t snapshotOffset = ftell(file);
+        index.push_back(snapshotOffset);
+        writeSnapshot(file, *current->data);
+        current = current->next;
+    }
+
+    header.indexOffset = ftell(file);
+
+    for (int i = 0; i < index.size(); i++)
+        fwrite(&index[i], sizeof(int64_t), 1, file);
+
+    fseek(file, 0, SEEK_SET);
+    writeHeader(file, header);
+    fclose(file);
 }
-// main section
+
 int32_t main()
 {
 
     if (!validateProgram("source.bin"))
     {
-        // send an error response instead of a .tdbg file
+        cout << "Validation Failed" << endl;
         return 1;
     }
 
